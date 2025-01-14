@@ -1,0 +1,84 @@
+name: Compile Go
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+  schedule:
+    - cron: "59 23 * * *" # 23h59
+  
+jobs:
+  build:
+    name: Building Go executable
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go environment
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.23
+
+      - name: Build the executable
+        run: go build -o cowsay cowsay.go
+
+      - name: Upload the executable
+        uses: actions/upload-artifact@v3
+        with:
+          name: executable
+          path: cowsay
+
+  AWS:
+    name: Deploy to the instance
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Download executable
+        uses: actions/download-artifact@v3
+        with:
+          name: executable
+    
+      - name: Deploy App on Self-hosted
+        run: |
+              sudo mkdir -p /app/
+              sudo cp cowsay /app/
+              sudo chmod +x /app/cowsay
+              echo "Application déployée sur le self-hosted runner."    
+
+  docker:
+    name: Build/Push Docker Image
+    runs-on: ubuntu-latest
+    needs: AWS
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+    
+      - name: Set version tag
+        id: version
+        run: |
+          VERSION_TAG="v${{ github.run_number }}"
+          echo "VERSION_TAG=$VERSION_TAG" >> $GITHUB_ENV
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+            context: .
+            push: true
+            platforms: linux/amd64,linux/arm64,linux/arm/v7
+            tags: |
+              ${{ secrets.DOCKER_USERNAME }}/cowsay.go:latest
+              ${{ secrets.DOCKER_USERNAME }}/cowsay.go:${{ env.VERSION_TAG }}
